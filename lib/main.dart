@@ -36,12 +36,12 @@ class PuliMekaApp extends StatelessWidget {
 // SETTINGS YOU CAN CHANGE
 // ---------------------------------------------------------------------------
 
-// How many moves ahead the computer thinks.
-// 2 = easy, 3 = medium, 4 = hard, 5 = very hard (may feel slow on old phones).
-const int aiDepth = 4;
-
 // true = the app uses the whole screen (no status bar or button bar).
 const bool fullScreenApp = true;
+
+// Three Pawns: what happens when a player cannot move at all?
+// true = that player loses, false = the game is a draw.
+const bool blockedPlayerLoses = true;
 
 // ---------------------------------------------------------------------------
 // BASIC TYPES
@@ -53,6 +53,29 @@ const int kGoat = 2;
 
 enum Side { tiger, goat }
 
+// The games in the app.
+enum GameKind { puli, threePawns }
+
+// Easy, Medium and Hard for the computer opponent.
+// "Depth" is how many moves ahead the computer thinks, and "mistake" is the
+// chance that it plays a random move instead of its best one.
+// Change these numbers to make a difficulty easier or harder.
+enum Difficulty {
+  //     name      Puli Meka          Three Pawns
+  easy('Easy', 1, 0.50, 2, 0.40),
+  medium('Medium', 3, 0.10, 4, 0.10),
+  hard('Hard', 4, 0.00, 7, 0.00);
+
+  const Difficulty(this.label, this.puliDepth, this.puliMistake,
+      this.threeDepth, this.threeMistake);
+
+  final String label;
+  final int puliDepth;
+  final double puliMistake;
+  final int threeDepth;
+  final double threeMistake;
+}
+
 class Jump {
   final int over;
   final int to;
@@ -60,84 +83,36 @@ class Jump {
 }
 
 class Move {
-  final int from; // -1 means "place a new goat on the board"
+  final int from; // -1 means "place a new piece on the board"
   final int to;
   final int captured; // -1 when nothing is captured
   const Move(this.from, this.to, [this.captured = -1]);
 }
 
+// Settings for one game of Puli Meka.
 class GameConfig {
   final bool vsComputer;
   final Side humanSide;
   final BoardDef board;
-  final Level? level; // set when playing in Levels mode
+  final Difficulty difficulty;
   GameConfig({
     required this.vsComputer,
     required this.humanSide,
     required this.board,
-    this.level,
+    required this.difficulty,
   });
 }
 
-// ---------------------------------------------------------------------------
-// LEVELS
-// In Levels mode you play the Goats against the tigers. Each level makes the
-// tigers smarter and lets them win with fewer captures.
-// You can change any number in the table to make a level easier or harder.
-// ---------------------------------------------------------------------------
-
-class Level {
-  final int number;
-  final int depth; // how many moves ahead the tigers think
-  final double mistakeChance; // chance (0 to 1) that the tigers play a random move
-  final int goatsToWin; // how many goats the tigers must capture to win
-  const Level(this.number, this.depth, this.mistakeChance, this.goatsToWin);
-}
-
-const List<Level> levels = [
-  Level(1, 1, 0.70, 15),
-  Level(2, 1, 0.55, 15),
-  Level(3, 1, 0.40, 15),
-  Level(4, 2, 0.45, 15),
-  Level(5, 2, 0.30, 14),
-  Level(6, 2, 0.15, 14),
-  Level(7, 2, 0.00, 13),
-  Level(8, 3, 0.30, 13),
-  Level(9, 3, 0.15, 12),
-  Level(10, 3, 0.00, 12),
-  Level(11, 3, 0.00, 11),
-  Level(12, 4, 0.25, 11),
-  Level(13, 4, 0.10, 10),
-  Level(14, 4, 0.00, 10),
-  Level(15, 4, 0.00, 9),
-  Level(16, 4, 0.00, 8),
-  Level(17, 4, 0.00, 7),
-  Level(18, 4, 0.00, 6),
-  Level(19, 4, 0.00, 5),
-  Level(20, 4, 0.00, 4),
-];
-
-GameConfig levelConfig(Level level) => GameConfig(
-      vsComputer: true,
-      humanSide: Side.goat,
-      board: puliMekaBoard,
-      level: level,
-    );
-
-// Remembers on the phone which level you have reached.
-class Progress {
-  static const String _key = 'unlocked_level';
-
-  static Future<int> unlockedLevel() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_key) ?? 1;
-  }
-
-  static Future<void> unlock(int level) async {
-    final prefs = await SharedPreferences.getInstance();
-    final current = prefs.getInt(_key) ?? 1;
-    if (level > current) await prefs.setInt(_key, level);
-  }
+// Settings for one game of Three Pawns.
+class ThreeConfig {
+  final bool vsComputer;
+  final int humanPlayer; // 1 = plays first (orange), 2 = plays second (blue)
+  final Difficulty difficulty;
+  ThreeConfig({
+    required this.vsComputer,
+    required this.humanPlayer,
+    required this.difficulty,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -769,7 +744,48 @@ void drawSplitLogo(Canvas canvas) {
   canvas.drawLine(const Offset(0, -0.80), const Offset(0, 0.94), _stroke(_ink, 0.03));
 }
 
-enum Art { tiger, goat, logo }
+const Color kPlayer1Color = Color(0xFFF28C28); // orange
+const Color kPlayer2Color = Color(0xFF4AA8E0); // blue
+
+// A pawn, for the Three Pawns game.
+void drawPawn(Canvas canvas, Color color) {
+  final dark = Color.lerp(color, const Color(0xFF000000), 0.35)!;
+
+  // shadow on the ground
+  canvas.drawOval(
+      Rect.fromCenter(center: const Offset(0, 0.84), width: 1.6, height: 0.4),
+      _fill(const Color(0x33000000)));
+
+  // base
+  final baseRect =
+      Rect.fromCenter(center: const Offset(0, 0.62), width: 1.5, height: 0.5);
+  canvas.drawOval(baseRect, _fill(dark));
+  canvas.drawOval(baseRect, _stroke(_ink, 0.05));
+
+  // body
+  final body = Path()
+    ..moveTo(-0.55, 0.62)
+    ..quadraticBezierTo(-0.15, 0.25, -0.22, -0.05)
+    ..lineTo(0.22, -0.05)
+    ..quadraticBezierTo(0.15, 0.25, 0.55, 0.62)
+    ..close();
+  canvas.drawPath(body, _fill(color));
+  canvas.drawPath(body, _stroke(_ink, 0.05));
+
+  // collar and head
+  canvas.drawOval(
+      Rect.fromCenter(center: const Offset(0, -0.05), width: 0.7, height: 0.22),
+      _fill(dark));
+  canvas.drawCircle(const Offset(0, -0.40), 0.38, _fill(color));
+  canvas.drawCircle(const Offset(0, -0.40), 0.38, _stroke(_ink, 0.05));
+
+  // shine
+  canvas.drawOval(
+      Rect.fromCenter(center: const Offset(-0.12, -0.52), width: 0.2, height: 0.14),
+      _fill(const Color(0x88FFFFFF)));
+}
+
+enum Art { tiger, goat, logo, pawns, pawnA, pawnB }
 
 // Lets you put the artwork anywhere in the app as a normal widget:
 //   const SizedBox(width: 56, height: 56, child: CustomPaint(painter: ArtPainter(Art.tiger)))
@@ -789,6 +805,21 @@ class ArtPainter extends CustomPainter {
         drawGoatFace(canvas);
       case Art.logo:
         drawSplitLogo(canvas);
+      case Art.pawnA:
+        drawPawn(canvas, kPlayer1Color);
+      case Art.pawnB:
+        drawPawn(canvas, kPlayer2Color);
+      case Art.pawns:
+        canvas.save();
+        canvas.translate(-0.5, 0.05);
+        canvas.scale(0.78);
+        drawPawn(canvas, kPlayer1Color);
+        canvas.restore();
+        canvas.save();
+        canvas.translate(0.5, 0.05);
+        canvas.scale(0.78);
+        drawPawn(canvas, kPlayer2Color);
+        canvas.restore();
     }
     canvas.restore();
   }
@@ -820,22 +851,28 @@ class BoardLayout {
 
   const BoardLayout._(this.sx, this.sy, this.ox, this.oy, this.pieceRadius);
 
-  factory BoardLayout(BoardDef b, Size size) {
+  factory BoardLayout(BoardDef b, Size size,
+      {double stretch = maxStretch,
+      double radiusFactor = 0.45,
+      double maxRadius = 46.0}) {
     // First pass finds the piece size, second pass leaves room for pieces
     // that sit on the edge of the board.
-    final first = _compute(b, size, 0.05 * min(size.width, size.height));
-    return _compute(b, size, first.pieceRadius * 1.25 + 4);
+    final first = _compute(b, size, 0.05 * min(size.width, size.height),
+        stretch, radiusFactor, maxRadius);
+    return _compute(b, size, first.pieceRadius * 1.25 + 4, stretch,
+        radiusFactor, maxRadius);
   }
 
-  static BoardLayout _compute(BoardDef b, Size size, double margin) {
+  static BoardLayout _compute(BoardDef b, Size size, double margin,
+      double stretch, double radiusFactor, double maxRadius) {
     final availW = max(1.0, (size.width - 2 * margin) * boardFill);
     final availH = max(1.0, (size.height - 2 * margin) * boardFill);
     double sx = availW / b.width;
     double sy = availH / b.height;
 
     // Do not stretch the board too much on very wide or very tall screens.
-    if (sy > sx * maxStretch) sy = sx * maxStretch;
-    if (sx > sy * maxStretch) sx = sy * maxStretch;
+    if (sy > sx * stretch) sy = sx * stretch;
+    if (sx > sy * stretch) sx = sy * stretch;
 
     final ox = (size.width - b.width * sx) / 2 - b.minX * sx;
     final oy = (size.height - b.height * sy) / 2 - b.minY * sy;
@@ -850,7 +887,7 @@ class BoardLayout {
         if (d < minDist) minDist = d;
       }
     }
-    final radius = min(minDist * 0.45, 46.0);
+    final radius = min(minDist * radiusFactor, maxRadius);
     return BoardLayout._(sx, sy, ox, oy, radius);
   }
 
@@ -971,12 +1008,12 @@ class BoardPainter extends CustomPainter {
     for (int i = 0; i < b.points.length; i++) {
       final value = game.cells[i];
       if (value == kEmpty) continue;
-      if (animating && i == mv.move.to) continue;
+      if (animating && i == mv!.move.to) continue;
       _drawPiece(canvas, at(i), r, value, lineWidth, selected: i == selected);
     }
 
     if (animating) {
-      final move = mv.move;
+      final move = mv!.move;
       final int value = mv.mover == Side.tiger ? kTiger : kGoat;
       final to = at(move.to);
 
@@ -1023,6 +1060,219 @@ class BoardPainter extends CustomPainter {
 }
 
 // ---------------------------------------------------------------------------
+// GAME FRAME: the layout shared by both games
+// Portrait: top bar, status, board, counters.
+// Landscape: board on the left, information on the right.
+// ---------------------------------------------------------------------------
+
+Widget statCounter(String label, String value) {
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          label,
+          style: const TextStyle(
+              color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+        ),
+      ),
+      FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          value,
+          style: const TextStyle(
+              color: Color(0xFFFFD54F),
+              fontSize: 24,
+              fontWeight: FontWeight.bold),
+        ),
+      ),
+    ],
+  );
+}
+
+// "Play again" and "Menu" buttons, shown when a game is over.
+Widget endButtonsRow(BuildContext context,
+    {required bool show, required VoidCallback onPlayAgain}) {
+  if (!show) return const SizedBox.shrink();
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      alignment: WrapAlignment.center,
+      children: [
+        FilledButton(onPressed: onPlayAgain, child: const Text('Play again')),
+        OutlinedButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.white,
+            side: const BorderSide(color: Colors.white54),
+          ),
+          child: const Text('Menu'),
+        ),
+      ],
+    ),
+  );
+}
+
+class GameFrame extends StatelessWidget {
+  final String title;
+  final String status;
+  final List<Widget> counters;
+  final Widget board;
+  final Widget endButtons;
+  final VoidCallback onRestart;
+
+  const GameFrame({
+    super.key,
+    required this.title,
+    required this.status,
+    required this.counters,
+    required this.board,
+    required this.endButtons,
+    required this.onRestart,
+  });
+
+  // Slim bar at the top: back, title, sound, restart.
+  Widget topBar(BuildContext context) {
+    return SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            tooltip: 'Back',
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+          const SizedBox(width: 48),
+          Expanded(
+            child: Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold),
+            ),
+          ),
+          ValueListenableBuilder<bool>(
+            valueListenable: AppSettings.soundOn,
+            builder: (context, on, _) => IconButton(
+              icon: Icon(on ? Icons.volume_up : Icons.volume_off,
+                  color: Colors.white),
+              tooltip: on ? 'Sound on' : 'Sound off',
+              onPressed: () => AppSettings.setSound(!on),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            tooltip: 'Restart',
+            onPressed: onRestart,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Fixed height and one line: the board must never change size while you
+  // play, otherwise it looks like the screen is shaking.
+  Widget statusBanner() {
+    return SizedBox(
+      height: 44,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              status,
+              maxLines: 1,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF3B2A1A),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final landscape = constraints.maxWidth > constraints.maxHeight * 1.2;
+
+            if (landscape) {
+              final panelWidth = min(280.0, constraints.maxWidth * 0.34);
+              return Row(
+                children: [
+                  Expanded(child: board),
+                  SizedBox(
+                    width: panelWidth,
+                    child: Center(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            topBar(context),
+                            statusBanner(),
+                            endButtons,
+                            const SizedBox(height: 8),
+                            for (final c in counters)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                child: c,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            return Column(
+              children: [
+                topBar(context),
+                statusBanner(),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(child: board),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 4,
+                        child: endButtons,
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
+                  child: Row(
+                    children: [
+                      for (final c in counters) Expanded(child: c),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // MENU SCREEN
 // ---------------------------------------------------------------------------
 
@@ -1031,6 +1281,7 @@ class OptionCard extends StatelessWidget {
   final String label;
   final bool selected;
   final bool enabled;
+  final double width;
   final VoidCallback onTap;
 
   const OptionCard({
@@ -1040,6 +1291,7 @@ class OptionCard extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.enabled = true,
+    this.width = 130,
   });
 
   @override
@@ -1049,7 +1301,7 @@ class OptionCard extends StatelessWidget {
       child: GestureDetector(
         onTap: enabled ? onTap : null,
         child: Container(
-          width: 130,
+          width: width,
           height: 124,
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
@@ -1089,39 +1341,11 @@ class MenuScreen extends StatefulWidget {
 }
 
 class _MenuScreenState extends State<MenuScreen> {
+  GameKind kind = GameKind.puli;
   bool vsComputer = true;
-  bool career = false; // true = Levels mode
-  Side humanSide = Side.goat;
-
-  @override
-  void initState() {
-    super.initState();
-    // The first time the app opens, show the rules.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _showHelpFirstTime());
-  }
-
-  Future<void> _showHelpFirstTime() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (prefs.getBool('seen_help') ?? false) return;
-      await prefs.setBool('seen_help', true);
-      if (mounted) openHowToPlay();
-    } catch (_) {}
-  }
-
-  void openHowToPlay() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const HowToPlayScreen()),
-    );
-  }
-
-  void openSettings() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF4A3622),
-      builder: (_) => const SettingsSheet(),
-    );
-  }
+  Difficulty difficulty = Difficulty.medium;
+  Side humanSide = Side.goat; // Puli Meka: which side you play
+  bool humanFirst = true; // Three Pawns: do you move first?
 
   Widget heading(String text) {
     return Padding(
@@ -1137,23 +1361,54 @@ class _MenuScreenState extends State<MenuScreen> {
     );
   }
 
+  Widget options(List<Widget> children) {
+    return Wrap(
+      spacing: 14,
+      runSpacing: 14,
+      alignment: WrapAlignment.center,
+      children: children,
+    );
+  }
+
+  IconData difficultyIcon(Difficulty d) {
+    return switch (d) {
+      Difficulty.easy => Icons.sentiment_satisfied_alt,
+      Difficulty.medium => Icons.sentiment_neutral,
+      Difficulty.hard => Icons.whatshot,
+    };
+  }
+
   void startGame() {
-    if (career) {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const LevelsScreen()),
-      );
-      return;
-    }
+    final Widget screen = kind == GameKind.puli
+        ? GameScreen(
+            config: GameConfig(
+              vsComputer: vsComputer,
+              humanSide: humanSide,
+              board: puliMekaBoard,
+              difficulty: difficulty,
+            ),
+          )
+        : ThreePawnsScreen(
+            config: ThreeConfig(
+              vsComputer: vsComputer,
+              humanPlayer: humanFirst ? 1 : 2,
+              difficulty: difficulty,
+            ),
+          );
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+  }
+
+  void openHowToPlay() {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GameScreen(
-          config: GameConfig(
-            vsComputer: vsComputer,
-            humanSide: humanSide,
-            board: puliMekaBoard,
-          ),
-        ),
-      ),
+      MaterialPageRoute(builder: (_) => HowToPlayScreen(kind: kind)),
+    );
+  }
+
+  void openSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF4A3622),
+      builder: (_) => const SettingsSheet(),
     );
   }
 
@@ -1162,6 +1417,8 @@ class _MenuScreenState extends State<MenuScreen> {
     // The logo gets smaller on short screens (for example a phone on its side).
     final double logoSize =
         (MediaQuery.sizeOf(context).height * 0.18).clamp(80.0, 170.0).toDouble();
+    final bool puli = kind == GameKind.puli;
+
     return Scaffold(
       backgroundColor: const Color(0xFF3B2A1A),
       body: SafeArea(
@@ -1171,148 +1428,171 @@ class _MenuScreenState extends State<MenuScreen> {
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 520),
               child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: logoSize,
-                  height: logoSize,
-                  child: const CustomPaint(painter: ArtPainter(Art.logo)),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'PULI MEKA',
-                  style: TextStyle(
-                      color: Color(0xFFFFD54F),
-                      fontSize: 38,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 2),
-                ),
-                const Text(
-                  'Tigers and Goats',
-                  style: TextStyle(color: Colors.white70, fontSize: 16),
-                ),
-                heading('SELECT TYPE'),
-                Wrap(
-                  spacing: 14,
-                  runSpacing: 14,
-                  alignment: WrapAlignment.center,
-                  children: [
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: logoSize,
+                    height: logoSize,
+                    child: CustomPaint(
+                      painter: ArtPainter(puli ? Art.logo : Art.pawns),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      puli ? 'PULI MEKA' : 'THREE PAWNS',
+                      style: const TextStyle(
+                          color: Color(0xFFFFD54F),
+                          fontSize: 38,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 2),
+                    ),
+                  ),
+                  Text(
+                    puli ? 'Tigers and Goats' : 'Get three in a row',
+                    style: const TextStyle(color: Colors.white70, fontSize: 16),
+                  ),
+
+                  heading('SELECT GAME'),
+                  options([
+                    OptionCard(
+                      label: 'Puli Meka',
+                      selected: puli,
+                      onTap: () => setState(() => kind = GameKind.puli),
+                      child: const SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: CustomPaint(painter: ArtPainter(Art.logo)),
+                      ),
+                    ),
+                    OptionCard(
+                      label: 'Three Pawns',
+                      selected: !puli,
+                      onTap: () => setState(() => kind = GameKind.threePawns),
+                      child: const SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: CustomPaint(painter: ArtPainter(Art.pawns)),
+                      ),
+                    ),
+                  ]),
+
+                  heading('SELECT TYPE'),
+                  options([
                     OptionCard(
                       label: 'vs Computer',
-                      selected: !career && vsComputer,
-                      onTap: () => setState(() {
-                        career = false;
-                        vsComputer = true;
-                      }),
+                      selected: vsComputer,
+                      onTap: () => setState(() => vsComputer = true),
                       child: const Icon(Icons.computer,
                           size: 44, color: Colors.white),
                     ),
                     OptionCard(
                       label: '2 Players',
-                      selected: !career && !vsComputer,
-                      onTap: () => setState(() {
-                        career = false;
-                        vsComputer = false;
-                      }),
+                      selected: !vsComputer,
+                      onTap: () => setState(() => vsComputer = false),
                       child: const Icon(Icons.people,
                           size: 44, color: Colors.white),
                     ),
-                    OptionCard(
-                      label: 'Levels',
-                      selected: career,
-                      onTap: () => setState(() => career = true),
-                      child: const Icon(Icons.emoji_events,
-                          size: 44, color: Colors.white),
-                    ),
+                  ]),
+
+                  if (vsComputer) ...[
+                    heading('DIFFICULTY'),
+                    options([
+                      for (final d in Difficulty.values)
+                        OptionCard(
+                          width: 96,
+                          label: d.label,
+                          selected: difficulty == d,
+                          onTap: () => setState(() => difficulty = d),
+                          child: Icon(difficultyIcon(d),
+                              size: 40, color: Colors.white),
+                        ),
+                    ]),
+                    heading('PICK YOUR SIDE'),
+                    if (puli)
+                      options([
+                        OptionCard(
+                          label: 'Tigers',
+                          selected: humanSide == Side.tiger,
+                          onTap: () => setState(() => humanSide = Side.tiger),
+                          child: const SizedBox(
+                            width: 56,
+                            height: 56,
+                            child: CustomPaint(painter: ArtPainter(Art.tiger)),
+                          ),
+                        ),
+                        OptionCard(
+                          label: 'Goats',
+                          selected: humanSide == Side.goat,
+                          onTap: () => setState(() => humanSide = Side.goat),
+                          child: const SizedBox(
+                            width: 56,
+                            height: 56,
+                            child: CustomPaint(painter: ArtPainter(Art.goat)),
+                          ),
+                        ),
+                      ])
+                    else
+                      options([
+                        OptionCard(
+                          label: 'Play first\n(orange)',
+                          selected: humanFirst,
+                          onTap: () => setState(() => humanFirst = true),
+                          child: const SizedBox(
+                            width: 56,
+                            height: 56,
+                            child: CustomPaint(painter: ArtPainter(Art.pawnA)),
+                          ),
+                        ),
+                        OptionCard(
+                          label: 'Play second\n(blue)',
+                          selected: !humanFirst,
+                          onTap: () => setState(() => humanFirst = false),
+                          child: const SizedBox(
+                            width: 56,
+                            height: 56,
+                            child: CustomPaint(painter: ArtPainter(Art.pawnB)),
+                          ),
+                        ),
+                      ]),
                   ],
-                ),
-                if (!career) ...[
-                heading('CHOOSE BOARD'),
-                Wrap(
-                  spacing: 14,
-                  runSpacing: 14,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    OptionCard(
-                      label: 'Puli Meka',
-                      selected: true,
-                      onTap: () {},
-                      child: const Icon(Icons.change_history,
-                          size: 44, color: Colors.white),
+
+                  const SizedBox(height: 30),
+                  FilledButton.icon(
+                    onPressed: startGame,
+                    icon: const Icon(Icons.check),
+                    label: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      child: Text('START',
+                          style: TextStyle(
+                              fontSize: 20, fontWeight: FontWeight.bold)),
                     ),
-                    OptionCard(
-                      label: 'Bagh-Chal\n(coming soon)',
-                      selected: false,
-                      enabled: false,
-                      onTap: () {},
-                      child: const Icon(Icons.grid_4x4,
-                          size: 44, color: Colors.white),
-                    ),
-                  ],
-                ),
-                ],
-                if (!career && vsComputer) ...[
-                  heading('PICK YOUR SIDE'),
+                  ),
+
+                  // How to play and Settings stay here, at the bottom.
+                  const SizedBox(height: 16),
                   Wrap(
-                    spacing: 14,
-                    runSpacing: 14,
+                    spacing: 8,
                     alignment: WrapAlignment.center,
                     children: [
-                      OptionCard(
-                        label: 'Tigers',
-                        selected: humanSide == Side.tiger,
-                        onTap: () => setState(() => humanSide = Side.tiger),
-                        child: const SizedBox(
-                          width: 56,
-                          height: 56,
-                          child: CustomPaint(painter: ArtPainter(Art.tiger)),
-                        ),
+                      TextButton.icon(
+                        onPressed: openHowToPlay,
+                        icon: const Icon(Icons.help_outline,
+                            color: Colors.white70),
+                        label: const Text('How to play',
+                            style: TextStyle(color: Colors.white70)),
                       ),
-                      OptionCard(
-                        label: 'Goats',
-                        selected: humanSide == Side.goat,
-                        onTap: () => setState(() => humanSide = Side.goat),
-                        child: const SizedBox(
-                          width: 56,
-                          height: 56,
-                          child: CustomPaint(painter: ArtPainter(Art.goat)),
-                        ),
+                      TextButton.icon(
+                        onPressed: openSettings,
+                        icon: const Icon(Icons.settings, color: Colors.white70),
+                        label: const Text('Settings',
+                            style: TextStyle(color: Colors.white70)),
                       ),
                     ],
                   ),
                 ],
-                const SizedBox(height: 30),
-                FilledButton.icon(
-                  onPressed: startGame,
-                  icon: const Icon(Icons.check),
-                  label: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: Text('START',
-                        style: TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    TextButton.icon(
-                      onPressed: openHowToPlay,
-                      icon: const Icon(Icons.help_outline, color: Colors.white70),
-                      label: const Text('How to play',
-                          style: TextStyle(color: Colors.white70)),
-                    ),
-                    TextButton.icon(
-                      onPressed: openSettings,
-                      icon: const Icon(Icons.settings, color: Colors.white70),
-                      label: const Text('Settings',
-                          style: TextStyle(color: Colors.white70)),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+              ),
             ),
           ),
         ),
@@ -1372,7 +1652,8 @@ class SettingsSheet extends StatelessWidget {
 }
 
 class HowToPlayScreen extends StatelessWidget {
-  const HowToPlayScreen({super.key});
+  final GameKind kind;
+  const HowToPlayScreen({super.key, required this.kind});
 
   Widget art(Art a) => SizedBox(
         width: 46,
@@ -1419,73 +1700,126 @@ class HowToPlayScreen extends StatelessWidget {
     );
   }
 
+  List<Widget> puliSections() {
+    return [
+      section(
+        'The game',
+        [
+          'Puli Meka is a very old game from South India. One side plays 3 tigers, the other plays 15 goats.',
+          'The tigers start on the board. The goats start outside it and are placed one by one.',
+          'Goats always move first.',
+        ],
+        leading: art(Art.logo),
+      ),
+      section(
+        'How to move',
+        [
+          'Tap one of your pieces. Green rings show where it can go.',
+          'Tap a green ring to move there.',
+          'Pieces move along the lines, one step at a time, to a connected empty point.',
+          'When placing a goat, just tap any empty point.',
+        ],
+        leading: const Icon(Icons.touch_app, color: Colors.white70, size: 40),
+      ),
+      section(
+        'Goats',
+        [
+          'First phase: each turn you place one goat on any empty point. Goats cannot move until all 15 are on the board.',
+          'Second phase: each turn you move one goat to a connected empty point.',
+          'You win by trapping all the tigers so that none of them can move.',
+        ],
+        leading: art(Art.goat),
+      ),
+      section(
+        'Tigers',
+        [
+          'Each turn, move one tiger to a connected empty point.',
+          'Or jump over a goat that is next to the tiger, in a straight line, and land on the empty point right behind it. The goat is captured and removed.',
+          'Only one goat can be captured per turn. Tigers cannot jump over other tigers.',
+          'You win by capturing 15 goats, which is all of them.',
+        ],
+        leading: art(Art.tiger),
+      ),
+      section(
+        'Tips',
+        [
+          'Goats: a goat is safe when the point behind it is taken or is off the board. Keep your goats together and use the edges.',
+          'Goats: do not rush. Tigers cannot capture what they cannot reach.',
+          'Tigers: stay apart, look for two goats you can threaten at once, and keep away from corners.',
+          'Playing the computer? Pick Easy, Medium or Hard on the menu.',
+        ],
+        leading: const Icon(Icons.lightbulb_outline,
+            color: Color(0xFFFFD54F), size: 40),
+      ),
+    ];
+  }
+
+  List<Widget> threePawnsSections() {
+    return [
+      section(
+        'The game',
+        [
+          'Three Pawns is an old game that is also known as Tapatan (Philippines) and Three Men\u2019s Morris.',
+          'There are two players with 3 pawns each: orange and blue. Orange moves first.',
+          'Play against a friend or against the computer.',
+        ],
+        leading: art(Art.pawns),
+      ),
+      section(
+        'Step 1: place your pawns',
+        [
+          'Take turns putting one pawn on any empty point.',
+          'Keep going until all 6 pawns are on the board.',
+          'If you get three in a row while placing, you win straight away.',
+        ],
+        leading: const Icon(Icons.touch_app, color: Colors.white70, size: 40),
+      ),
+      section(
+        'Step 2: move your pawns',
+        [
+          'Now take turns moving one of your pawns, one step, along a line to a connected empty point.',
+          'Tap a pawn. Green rings show where it can go. Tap a ring to move.',
+          'The two diagonal lines count too.',
+        ],
+        leading: art(Art.pawnA),
+      ),
+      section(
+        'How to win',
+        [
+          'Get your 3 pawns in a straight line: across, down or diagonally.',
+          'If a player cannot move at all, that player loses.',
+          'If the same position happens three times, the game is a draw.',
+        ],
+        leading: const Icon(Icons.emoji_events,
+            color: Color(0xFFFFD54F), size: 40),
+      ),
+      section(
+        'Tips',
+        [
+          'The center point is the strongest, because it touches every line.',
+          'When the other player has two pawns in a line, block the third point.',
+          'Try to make two threats at once, so they can only block one.',
+          'Playing the computer? Pick Easy, Medium or Hard on the menu.',
+        ],
+        leading: const Icon(Icons.lightbulb_outline,
+            color: Color(0xFFFFD54F), size: 40),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
+    final puli = kind == GameKind.puli;
     return Scaffold(
       backgroundColor: const Color(0xFF3B2A1A),
-      appBar: AppBar(title: const Text('How to play')),
+      appBar: AppBar(title: Text(puli ? 'How to play Puli Meka' : 'How to play Three Pawns')),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 600),
             child: ListView(
               padding: const EdgeInsets.all(16),
-              children: [
-                section(
-                  'The game',
-                  [
-                    'Puli Meka is a very old game from South India. One side plays 3 tigers, the other plays 15 goats.',
-                    'The tigers start on the board. The goats start outside it and are placed one by one.',
-                    'Goats always move first.',
-                  ],
-                  leading: const SizedBox(
-                    width: 46,
-                    height: 46,
-                    child: CustomPaint(painter: ArtPainter(Art.logo)),
-                  ),
-                ),
-                section(
-                  'How to move',
-                  [
-                    'Tap one of your pieces. Green rings show where it can go.',
-                    'Tap a green ring to move there.',
-                    'Pieces move along the lines, one step at a time, to a connected empty point.',
-                    'When placing a goat, just tap any empty point.',
-                  ],
-                  leading: const Icon(Icons.touch_app,
-                      color: Colors.white70, size: 40),
-                ),
-                section(
-                  'Goats',
-                  [
-                    'First phase: each turn you place one goat on any empty point. Goats cannot move until all 15 are on the board.',
-                    'Second phase: each turn you move one goat to a connected empty point.',
-                    'You win by trapping all the tigers so that none of them can move.',
-                  ],
-                  leading: art(Art.goat),
-                ),
-                section(
-                  'Tigers',
-                  [
-                    'Each turn, move one tiger to a connected empty point.',
-                    'Or jump over a goat that is next to the tiger, in a straight line, and land on the empty point right behind it. The goat is captured and removed.',
-                    'Only one goat can be captured per turn. Tigers cannot jump over other tigers.',
-                    'You win by capturing enough goats. The number needed is shown under GOATS CAPTURED.',
-                  ],
-                  leading: art(Art.tiger),
-                ),
-                section(
-                  'Tips',
-                  [
-                    'Goats: a goat is safe when the point behind it is taken or is off the board. Keep your goats together and use the edges.',
-                    'Goats: do not rush. Tigers cannot capture what they cannot reach.',
-                    'Tigers: stay apart, look for two goats you can threaten at once, and keep away from corners.',
-                    'Levels: you play the goats. Each level the tigers get smarter and need fewer captures.',
-                  ],
-                  leading: const Icon(Icons.lightbulb_outline,
-                      color: Color(0xFFFFD54F), size: 40),
-                ),
-              ],
+              children: puli ? puliSections() : threePawnsSections(),
             ),
           ),
         ),
@@ -1495,122 +1829,7 @@ class HowToPlayScreen extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// LEVELS SCREEN
-// ---------------------------------------------------------------------------
-
-class LevelsScreen extends StatefulWidget {
-  const LevelsScreen({super.key});
-
-  @override
-  State<LevelsScreen> createState() => _LevelsScreenState();
-}
-
-class _LevelsScreenState extends State<LevelsScreen> {
-  int unlocked = 1;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final n = await Progress.unlockedLevel();
-    if (mounted) setState(() => unlocked = n);
-  }
-
-  Future<void> _open(Level level) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => GameScreen(config: levelConfig(level))),
-    );
-    _load(); // refresh the lock icons when you come back
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF3B2A1A),
-      appBar: AppBar(title: const Text('Levels')),
-      body: SafeArea(
-        child: Column(
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'You play the Goats. Win a level to unlock the next one.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white, fontSize: 16),
-              ),
-            ),
-            Expanded(
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640),
-                child: GridView.builder(
-                padding: const EdgeInsets.all(16),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 96,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                ),
-                itemCount: levels.length,
-                itemBuilder: (context, i) {
-                  final level = levels[i];
-                  final locked = level.number > unlocked;
-                  final done = level.number < unlocked;
-                  final current = level.number == unlocked;
-                  return GestureDetector(
-                    onTap: locked ? null : () => _open(level),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: locked
-                            ? const Color(0xFF5B4A3A)
-                            : const Color(0xFF2A9D8F),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: current
-                              ? const Color(0xFFFFE082)
-                              : Colors.transparent,
-                          width: 4,
-                        ),
-                      ),
-                      child: Center(
-                        child: locked
-                            ? const Icon(Icons.lock,
-                                color: Colors.white54, size: 30)
-                            : Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    '${level.number}',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 26,
-                                        fontWeight: FontWeight.bold),
-                                  ),
-                                  if (done)
-                                    const Icon(Icons.star,
-                                        color: Color(0xFFFFD54F), size: 18),
-                                ],
-                              ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-              ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// GAME SCREEN
+// PULI MEKA SCREEN
 // ---------------------------------------------------------------------------
 
 class GameScreen extends StatefulWidget {
@@ -1644,7 +1863,7 @@ class _GameScreenState extends State<GameScreen>
   @override
   void initState() {
     super.initState();
-    game = PuliGame(config.board, goatsToWin: config.level?.goatsToWin);
+    game = PuliGame(config.board);
     _maybeComputerMove(); // the computer plays first if you chose Tigers
   }
 
@@ -1654,43 +1873,16 @@ class _GameScreenState extends State<GameScreen>
     super.dispose();
   }
 
-  bool _levelSaved = false;
-
   void restart() {
     _gen++;
     _thinking = false;
     _animating = false;
     _controller.stop();
-    _levelSaved = false;
     setState(() {
       _moveAnim = null;
-      game = PuliGame(config.board, goatsToWin: config.level?.goatsToWin);
+      game = PuliGame(config.board);
     });
     _maybeComputerMove();
-  }
-
-  // When you win a level, unlock the next one.
-  void _checkLevelComplete() {
-    final level = config.level;
-    if (level == null || _levelSaved) return;
-    if (game.winner == config.humanSide) {
-      _levelSaved = true;
-      Progress.unlock(level.number + 1);
-    }
-  }
-
-  // The level after this one, once you have won this one.
-  Level? get nextLevel {
-    final level = config.level;
-    if (level == null || game.winner != config.humanSide) return null;
-    if (level.number >= levels.length) return null;
-    return levels[level.number]; // list starts at 0, level numbers at 1
-  }
-
-  void goToNextLevel(Level next) {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => GameScreen(config: levelConfig(next))),
-    );
   }
 
   void _maybeComputerMove() {
@@ -1702,8 +1894,8 @@ class _GameScreenState extends State<GameScreen>
       _thinking = false;
       if (!isComputerTurn || _animating) return;
       final move = ComputerPlayer(
-        depth: config.level?.depth ?? aiDepth,
-        mistakeChance: config.level?.mistakeChance ?? 0,
+        depth: config.difficulty.puliDepth,
+        mistakeChance: config.difficulty.puliMistake,
       ).chooseMove(game);
       if (move == null) return;
       _play(move);
@@ -1737,7 +1929,6 @@ class _GameScreenState extends State<GameScreen>
       _animating = false;
       _moveAnim = null;
     });
-    _checkLevelComplete();
 
     final w = game.winner;
     if (w != null) {
@@ -1752,12 +1943,6 @@ class _GameScreenState extends State<GameScreen>
   String get statusText {
     final w = game.winner;
     if (w != null) {
-      final level = config.level;
-      if (level != null) {
-        return w == config.humanSide
-            ? 'Level ${level.number} complete!'
-            : 'The tigers win. Try again!';
-      }
       if (config.vsComputer) {
         return w == config.humanSide ? 'You win!' : 'Computer wins!';
       }
@@ -1771,134 +1956,6 @@ class _GameScreenState extends State<GameScreen>
         ? (game.placing ? 'place a goat' : 'move a goat')
         : 'move a tiger';
     return '$who: $what';
-  }
-
-  Widget counter(String label, String value) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            label,
-            style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-                fontWeight: FontWeight.bold),
-          ),
-        ),
-        FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            value,
-            style: const TextStyle(
-                color: Color(0xFFFFD54F),
-                fontSize: 24,
-                fontWeight: FontWeight.bold),
-          ),
-        ),
-      ],
-    );
-  }
-
-  List<Widget> get counters => [
-        counter('TIGERS CORNERED', '${game.tigersCornered}/${game.tigerCount}'),
-        counter('GOATS CAPTURED', '${game.goatsCaptured}/${game.goatsToWin}'),
-        counter('GOATS OUTSIDE',
-            '${game.goatsToPlace}/${config.board.totalGoats}'),
-      ];
-
-  // Slim bar at the top: back, title, restart.
-  Widget topBar() {
-    final level = config.level;
-    return SizedBox(
-      height: 48,
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
-            tooltip: 'Back',
-            onPressed: () => Navigator.of(context).maybePop(),
-          ),
-          const SizedBox(width: 48),
-          Expanded(
-            child: Text(
-              level != null ? 'Level ${level.number}' : config.board.name,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold),
-            ),
-          ),
-          ValueListenableBuilder<bool>(
-            valueListenable: AppSettings.soundOn,
-            builder: (context, on, _) => IconButton(
-              icon: Icon(on ? Icons.volume_up : Icons.volume_off,
-                  color: Colors.white),
-              tooltip: on ? 'Sound on' : 'Sound off',
-              onPressed: () => AppSettings.setSound(!on),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
-            tooltip: 'Restart',
-            onPressed: restart,
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Fixed height and one line: the board must never change size while you
-  // play, otherwise it looks like the screen is shaking.
-  Widget statusBanner() {
-    return SizedBox(
-      height: 44,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              statusText,
-              maxLines: 1,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // "Next level" / "Play again" buttons, shown when the game is over.
-  Widget endButtons() {
-    if (game.winner == null || _animating) return const SizedBox.shrink();
-    final next = nextLevel;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 8,
-        alignment: WrapAlignment.center,
-        children: [
-          if (next != null)
-            FilledButton(
-              onPressed: () => goToNextLevel(next),
-              child: const Text('Next level'),
-            ),
-          FilledButton(
-            onPressed: restart,
-            child: Text(config.level != null && game.winner != config.humanSide
-                ? 'Try again'
-                : 'Play again'),
-          ),
-        ],
-      ),
-    );
   }
 
   // The board fills all the space it is given.
@@ -1936,76 +1993,553 @@ class _GameScreenState extends State<GameScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF3B2A1A),
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final landscape = constraints.maxWidth > constraints.maxHeight * 1.2;
-
-            if (landscape) {
-              // Phone on its side or a wide tablet: board on the left,
-              // information on the right.
-              final panelWidth = min(280.0, constraints.maxWidth * 0.34);
-              return Row(
-                children: [
-                  Expanded(child: boardArea()),
-                  SizedBox(
-                    width: panelWidth,
-                    child: Center(
-                      child: SingleChildScrollView(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            topBar(),
-                            statusBanner(),
-                            endButtons(),
-                            const SizedBox(height: 8),
-                            for (final c in counters)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 6),
-                                child: c,
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            }
-
-            // Portrait: the board takes all the space left over.
-            return Column(
-              children: [
-                topBar(),
-                statusBanner(),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      boardArea(),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 4,
-                        child: endButtons(),
-                      ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
-                  child: Row(
-                    children: [
-                      for (final c in counters) Expanded(child: c),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
+    return GameFrame(
+      title: config.board.name,
+      status: statusText,
+      counters: [
+        statCounter('TIGERS CORNERED', '${game.tigersCornered}/${game.tigerCount}'),
+        statCounter('GOATS CAPTURED', '${game.goatsCaptured}/${game.goatsToWin}'),
+        statCounter(
+            'GOATS OUTSIDE', '${game.goatsToPlace}/${config.board.totalGoats}'),
+      ],
+      board: boardArea(),
+      endButtons: endButtonsRow(
+        context,
+        show: game.winner != null && !_animating,
+        onPlayAgain: restart,
       ),
+      onRestart: restart,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// THREE PAWNS (also known as Tapatan or Three Men's Morris)
+// 9 points, 3 pawns each. First everybody places their pawns, then you slide
+// them one step along the lines. Three in a straight line wins.
+// ---------------------------------------------------------------------------
+
+// The board is a 3x3 grid of points joined by 3 rows, 3 columns and 2
+// diagonals. The lines are also the 8 winning lines.
+final BoardDef threePawnsBoard = BoardDef(
+  name: 'Three Pawns',
+  points: const [
+    Offset(0, 0), Offset(150, 0), Offset(300, 0),
+    Offset(0, 150), Offset(150, 150), Offset(300, 150),
+    Offset(0, 300), Offset(150, 300), Offset(300, 300),
+  ],
+  lines: const [
+    [0, 1, 2], [3, 4, 5], [6, 7, 8], // rows
+    [0, 3, 6], [1, 4, 7], [2, 5, 8], // columns
+    [0, 4, 8], [2, 4, 6], // diagonals
+  ],
+  // The next three are only used by Puli Meka.
+  startTigers: const [],
+  totalGoats: 0,
+  goatsToWin: 0,
+);
+
+BoardLayout threeLayout(Size size) => BoardLayout(
+      threePawnsBoard,
+      size,
+      stretch: 1.0, // keep the board square
+      radiusFactor: 0.26,
+      maxRadius: 40.0,
+    );
+
+class ThreeGame {
+  final List<int> cells; // 0 = empty, 1 = player 1 (orange), 2 = player 2 (blue)
+  final List<int> placed; // how many pawns each player has put on the board
+  int turn; // 1 or 2
+  int? winner; // 1 or 2 when somebody has won
+  bool draw;
+  List<int>? winLine; // the three points of the winning line
+  int? selected; // only used by the screen
+  final Map<String, int> _seen; // how often each position has happened
+
+  ThreeGame()
+      : cells = List.filled(9, 0),
+        placed = [0, 0],
+        turn = 1,
+        draw = false,
+        _seen = {};
+
+  ThreeGame.copy(ThreeGame o)
+      : cells = List.of(o.cells),
+        placed = List.of(o.placed),
+        turn = o.turn,
+        winner = o.winner,
+        draw = o.draw,
+        winLine = o.winLine,
+        _seen = {};
+
+  // True while the player to move still has pawns to put on the board.
+  bool get placing => placed[turn - 1] < 3;
+
+  List<Move> legalMoves() {
+    final moves = <Move>[];
+    if (winner != null || draw) return moves;
+    if (placing) {
+      for (int i = 0; i < 9; i++) {
+        if (cells[i] == 0) moves.add(Move(-1, i));
+      }
+    } else {
+      for (int i = 0; i < 9; i++) {
+        if (cells[i] != turn) continue;
+        for (final n in threePawnsBoard.neighbors[i]) {
+          if (cells[n] == 0) moves.add(Move(i, n));
+        }
+      }
+    }
+    return moves;
+  }
+
+  // Points the pawn on [from] can slide to (used to show green rings).
+  List<int> targetsFor(int from) {
+    return [
+      for (final n in threePawnsBoard.neighbors[from])
+        if (cells[n] == 0) n
+    ];
+  }
+
+  List<int>? _lineOf(int player) {
+    for (final line in threePawnsBoard.lines) {
+      if (cells[line[0]] == player &&
+          cells[line[1]] == player &&
+          cells[line[2]] == player) {
+        return line;
+      }
+    }
+    return null;
+  }
+
+  void apply(Move m) {
+    final me = turn;
+    if (m.from == -1) {
+      cells[m.to] = me;
+      placed[me - 1]++;
+    } else {
+      cells[m.from] = 0;
+      cells[m.to] = me;
+    }
+    selected = null;
+    turn = (me == 1) ? 2 : 1;
+
+    // Three in a row wins, both while placing and while moving.
+    final line = _lineOf(me);
+    if (line != null) {
+      winner = me;
+      winLine = line;
+      return;
+    }
+
+    // The player who has to move now is completely blocked.
+    if (legalMoves().isEmpty) {
+      if (blockedPlayerLoses) {
+        winner = me;
+      } else {
+        draw = true;
+      }
+      return;
+    }
+
+    // The same position three times is a draw.
+    final key = '${cells.join()}|$turn|${placed[0]}${placed[1]}';
+    final count = (_seen[key] ?? 0) + 1;
+    _seen[key] = count;
+    if (count >= 3) draw = true;
+  }
+
+  // A human tapped a point. Returns the move to play, or null when the tap
+  // only selected a pawn (or did nothing).
+  Move? tap(int index) {
+    if (winner != null || draw) return null;
+    if (placing) return cells[index] == 0 ? Move(-1, index) : null;
+    if (cells[index] == turn) {
+      selected = index;
+      return null;
+    }
+    final from = selected;
+    if (from == null || cells[index] != 0) return null;
+    if (threePawnsBoard.neighbors[from].contains(index)) {
+      return Move(from, index);
+    }
+    return null;
+  }
+}
+
+// The computer player for Three Pawns. It looks ahead several moves
+// ("negamax with alpha-beta") and picks the move with the best outcome.
+class ThreeAI {
+  final int depth;
+  final double mistakeChance;
+  final Random _random = Random();
+
+  ThreeAI({required this.depth, this.mistakeChance = 0});
+
+  Move? chooseMove(ThreeGame game) {
+    final moves = game.legalMoves();
+    if (moves.isEmpty) return null;
+    moves.shuffle(_random); // so it does not always play the same
+
+    // Sometimes play a random move (this makes Easy and Medium beatable).
+    if (mistakeChance > 0 && _random.nextDouble() < mistakeChance) {
+      return moves.first;
+    }
+    // The centre is the strongest first point, so do not search for it.
+    if (depth >= 6 && game.placing && game.placed[game.turn - 1] == 0) {
+      if (game.cells[4] == 0) return Move(-1, 4);
+    }
+
+    Move best = moves.first;
+    double bestScore = double.negativeInfinity;
+    for (final m in moves) {
+      final next = ThreeGame.copy(game)..apply(m);
+      final score = -_negamax(
+          next, depth - 1, double.negativeInfinity, double.infinity);
+      if (score > bestScore) {
+        bestScore = score;
+        best = m;
+      }
+    }
+    return best;
+  }
+
+  // Score from the point of view of the player whose turn it is in [g].
+  double _negamax(ThreeGame g, int d, double alpha, double beta) {
+    if (g.winner != null) {
+      return g.winner == g.turn ? 1000.0 + d : -1000.0 - d;
+    }
+    if (g.draw) return 0;
+    if (d <= 0) return _evaluate(g);
+    final moves = g.legalMoves();
+    if (moves.isEmpty) return _evaluate(g);
+
+    double best = double.negativeInfinity;
+    for (final m in moves) {
+      final v = -_negamax(ThreeGame.copy(g)..apply(m), d - 1, -beta, -alpha);
+      best = max(best, v);
+      alpha = max(alpha, best);
+      if (alpha >= beta) break;
+    }
+    return best;
+  }
+
+  // A guess of how good the position is when we stop looking further ahead:
+  // lines that only one player can still use are worth points, the centre too.
+  double _evaluate(ThreeGame g) {
+    final me = g.turn;
+    final opp = (me == 1) ? 2 : 1;
+    double score = 0;
+    for (final line in threePawnsBoard.lines) {
+      int mine = 0;
+      int theirs = 0;
+      for (final p in line) {
+        if (g.cells[p] == me) mine++;
+        if (g.cells[p] == opp) theirs++;
+      }
+      if (theirs == 0) score += mine * mine;
+      if (mine == 0) score -= theirs * theirs;
+    }
+    if (g.cells[4] == me) score += 2;
+    if (g.cells[4] == opp) score -= 2;
+    return score;
+  }
+}
+
+// Describes the move that is being animated right now.
+class ThreeAnim {
+  final Move move;
+  final int player;
+  const ThreeAnim(this.move, this.player);
+}
+
+class ThreeBoardPainter extends CustomPainter {
+  final ThreeGame game;
+  final ThreeAnim? anim;
+  final Animation<double>? animation;
+
+  ThreeBoardPainter(this.game, {this.anim, this.animation})
+      : super(repaint: animation);
+
+  void _pawn(Canvas canvas, Offset c, double r, int player,
+      {double scale = 1.0}) {
+    canvas.save();
+    canvas.translate(c.dx, c.dy);
+    canvas.scale(r * scale * 0.95);
+    drawPawn(canvas, player == 1 ? kPlayer1Color : kPlayer2Color);
+    canvas.restore();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final b = threePawnsBoard;
+    final layout = threeLayout(size);
+    final r = layout.pieceRadius;
+    final lineWidth = max(3.0, r * 0.14);
+    Offset at(int i) => layout.toScreen(b.points[i]);
+
+    final a = anim;
+    final double t = (a == null || animation == null) ? 1.0 : animation!.value;
+    final bool animating = a != null && t < 1.0;
+
+    // Darker panel behind the board
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromPoints(at(0), at(8)).inflate(r * 1.3),
+        Radius.circular(r * 0.8),
+      ),
+      Paint()..color = const Color(0x33000000),
+    );
+
+    // Lines
+    final linePaint = Paint()
+      ..color = const Color(0xFFE8DDB5)
+      ..strokeWidth = lineWidth
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    for (final line in b.lines) {
+      canvas.drawLine(at(line.first), at(line.last), linePaint);
+    }
+
+    // Points
+    final dotPaint = Paint()..color = const Color(0xFFE0B010);
+    for (int i = 0; i < 9; i++) {
+      canvas.drawCircle(at(i), r * 0.22, dotPaint);
+    }
+
+    // The winning line glows behind the pawns
+    final wl = game.winLine;
+    if (wl != null && !animating) {
+      canvas.drawLine(
+        at(wl.first),
+        at(wl.last),
+        Paint()
+          ..color = const Color(0xCCFFD54F)
+          ..strokeWidth = r * 0.55
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+
+    // Green rings: where the selected pawn can go
+    final selected = game.selected;
+    final ringPaint = Paint()
+      ..color = const Color(0xFF55E07A)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = lineWidth;
+    if (selected != null && game.winner == null && !game.draw && !animating) {
+      for (final target in game.targetsFor(selected)) {
+        canvas.drawCircle(at(target), r * 0.8, ringPaint);
+      }
+    }
+
+    // Pawns standing still (the one that is moving is drawn separately)
+    for (int i = 0; i < 9; i++) {
+      final player = game.cells[i];
+      if (player == 0) continue;
+      if (animating && i == a!.move.to) continue;
+      _pawn(canvas, at(i), r, player);
+      if (i == selected) canvas.drawCircle(at(i), r * 1.05, ringPaint);
+    }
+
+    if (animating) {
+      final move = a!.move;
+      final to = at(move.to);
+      if (move.from == -1) {
+        // A new pawn drops onto the board with a little bounce
+        final double pop = Curves.easeOutBack.transform(t);
+        final double drop = (1 - Curves.easeOut.transform(t)) * r * 1.6;
+        _pawn(canvas, to - Offset(0, drop), r, a.player,
+            scale: max(0.05, pop));
+      } else {
+        // A pawn slides, hopping a little
+        final from = at(move.from);
+        final double e = Curves.easeInOut.transform(t);
+        final double lift = sin(pi * e) * r * 0.5;
+        final pos = Offset.lerp(from, to, e)!;
+        _pawn(canvas, pos - Offset(0, lift), r, a.player,
+            scale: 1 + 0.06 * sin(pi * e));
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant ThreeBoardPainter oldDelegate) => true;
+}
+
+class ThreePawnsScreen extends StatefulWidget {
+  final ThreeConfig config;
+  const ThreePawnsScreen({super.key, required this.config});
+
+  @override
+  State<ThreePawnsScreen> createState() => _ThreePawnsScreenState();
+}
+
+class _ThreePawnsScreenState extends State<ThreePawnsScreen>
+    with SingleTickerProviderStateMixin {
+  late ThreeGame game;
+
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 300),
+  );
+  ThreeAnim? _anim;
+  bool _animating = false;
+  bool _thinking = false;
+  int _gen = 0;
+
+  ThreeConfig get config => widget.config;
+  int get aiPlayer => config.humanPlayer == 1 ? 2 : 1;
+
+  bool get isComputerTurn =>
+      config.vsComputer &&
+      game.winner == null &&
+      !game.draw &&
+      game.turn == aiPlayer;
+
+  bool get gameOver => game.winner != null || game.draw;
+
+  @override
+  void initState() {
+    super.initState();
+    game = ThreeGame();
+    _maybeComputerMove(); // the computer plays first if you chose second
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void restart() {
+    _gen++;
+    _thinking = false;
+    _animating = false;
+    _controller.stop();
+    setState(() {
+      _anim = null;
+      game = ThreeGame();
+    });
+    _maybeComputerMove();
+  }
+
+  void _maybeComputerMove() {
+    if (!isComputerTurn || _thinking || _animating) return;
+    _thinking = true;
+    final token = _gen;
+    Future.delayed(const Duration(milliseconds: 450), () {
+      if (!mounted || token != _gen) return;
+      _thinking = false;
+      if (!isComputerTurn || _animating) return;
+      final move = ThreeAI(
+        depth: config.difficulty.threeDepth,
+        mistakeChance: config.difficulty.threeMistake,
+      ).chooseMove(game);
+      if (move == null) return;
+      _play(move);
+    });
+  }
+
+  Future<void> _play(Move move) async {
+    final token = _gen;
+    final player = game.turn;
+    _animating = true;
+    setState(() {
+      _anim = ThreeAnim(move, player);
+      game.apply(move);
+    });
+
+    Sound.play(move.from == -1 ? Sfx.place : Sfx.move);
+    Haptics.light();
+
+    await _controller.forward(from: 0);
+    if (!mounted || token != _gen) return;
+    setState(() {
+      _animating = false;
+      _anim = null;
+    });
+
+    final w = game.winner;
+    if (w != null) {
+      final humanWon = !config.vsComputer || w == config.humanPlayer;
+      Sound.play(humanWon ? Sfx.win : Sfx.lose);
+      Haptics.heavy();
+      return;
+    }
+    if (game.draw) {
+      Sound.play(Sfx.select);
+      Haptics.medium();
+      return;
+    }
+    _maybeComputerMove();
+  }
+
+  String get statusText {
+    final w = game.winner;
+    if (w != null) {
+      if (config.vsComputer) {
+        return w == config.humanPlayer ? 'You win!' : 'Computer wins!';
+      }
+      return w == 1 ? 'Orange wins!' : 'Blue wins!';
+    }
+    if (game.draw) return "It's a draw!";
+    if (isComputerTurn) return 'Computer is thinking…';
+    final who = config.vsComputer
+        ? 'Your turn'
+        : (game.turn == 1 ? "Orange's turn" : "Blue's turn");
+    return '$who: ${game.placing ? 'place a pawn' : 'move a pawn'}';
+  }
+
+  Widget boardArea() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapUp: (details) {
+            if (_animating || isComputerTurn || gameOver) return;
+            final i = pointAt(
+                threePawnsBoard, threeLayout(size), details.localPosition);
+            if (i == null) return;
+            final before = game.selected;
+            final move = game.tap(i);
+            if (move != null) {
+              _play(move);
+            } else if (game.selected != before) {
+              setState(() {});
+              Sound.play(Sfx.select);
+              Haptics.tick();
+            }
+          },
+          child: CustomPaint(
+            size: size,
+            painter: ThreeBoardPainter(game,
+                anim: _anim, animation: _controller),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GameFrame(
+      title: threePawnsBoard.name,
+      status: statusText,
+      counters: [
+        statCounter('ORANGE TO PLACE', '${3 - game.placed[0]}/3'),
+        statCounter('BLUE TO PLACE', '${3 - game.placed[1]}/3'),
+        statCounter('STAGE',
+            (game.placed[0] < 3 || game.placed[1] < 3) ? 'Place' : 'Move'),
+      ],
+      board: boardArea(),
+      endButtons: endButtonsRow(
+        context,
+        show: gameOver && !_animating,
+        onPlayAgain: restart,
+      ),
+      onRestart: restart,
     );
   }
 }
