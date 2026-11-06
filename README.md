@@ -25,3 +25,21 @@ flutter run
 ```
 
 Sound effects are in `assets/sounds/`. The app icon is in `assets/icon/`.
+
+## Build and publish a versioned APK
+
+The GitHub Actions workflow builds a version-named APK on pushes and pull
+requests. To publish an APK on the repository's **Releases** page:
+
+1. Update `version` in `pubspec.yaml` (for example, `1.0.1+2`).
+2. Commit and push that change to `main`.
+3. Create and push a tag matching the version name (for example, `v1.0.1`):
+
+   ```
+   git tag v1.0.1
+   git push origin v1.0.1
+   ```
+
+The workflow builds the APK and attaches it to the matching GitHub Release as
+`puli-meka-1.0.1+2.apk`. The build number after `+` is included in the APK
+filename but not in the release tag.
