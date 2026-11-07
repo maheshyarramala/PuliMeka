@@ -1,3 +1,10 @@
+import 'theme/app_theme.dart';
+import 'models/game_definition.dart';
+import 'models/game_registry.dart';
+import 'screens/hub_screen.dart';
+import 'screens/rules_screen.dart';
+import 'screens/game_setup_sheet.dart';
+import 'ashta_chamma.dart';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -25,9 +32,26 @@ class PuliMekaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Puli Meka',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.brown),
-      home: const MenuScreen(),
+      title: 'Heritage Board Games',
+      theme: AppTheme.themeData,
+      home: Builder(
+        builder: (context) => HubScreen(
+          games: GameRegistry.getGames(context),
+          onOpenSettings: () {
+            showModalBottomSheet<void>(
+              context: context,
+              backgroundColor: AppTheme.bgSurface,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              builder: (_) => const SettingsSheet(),
+            );
+          },
+          soundNotifier: AppSettings.soundOn,
+          vibrationNotifier: AppSettings.vibrationOn,
+          onToggleSound: AppSettings.setSound,
+        ),
+      ),
     );
   }
 }
@@ -54,7 +78,7 @@ const int kGoat = 2;
 enum Side { tiger, goat }
 
 // The games in the app.
-enum GameKind { puli, threePawns }
+enum GameKind { puli, threePawns, ashtaChamma }
 
 // Easy, Medium and Hard for the computer opponent.
 // "Depth" is how many moves ahead the computer thinks, and "mistake" is the
@@ -785,7 +809,7 @@ void drawPawn(Canvas canvas, Color color) {
       _fill(const Color(0x88FFFFFF)));
 }
 
-enum Art { tiger, goat, logo, pawns, pawnA, pawnB }
+enum Art { tiger, goat, logo, pawns, pawnA, pawnB, shells }
 
 // Lets you put the artwork anywhere in the app as a normal widget:
 //   const SizedBox(width: 56, height: 56, child: CustomPaint(painter: ArtPainter(Art.tiger)))
@@ -819,6 +843,15 @@ class ArtPainter extends CustomPainter {
         canvas.translate(0.5, 0.05);
         canvas.scale(0.78);
         drawPawn(canvas, kPlayer2Color);
+        canvas.restore();
+      case Art.shells:
+        canvas.save();
+        canvas.translate(-0.4, 0);
+        drawCowrieShell(canvas, Offset.zero, 0.52, true);
+        canvas.restore();
+        canvas.save();
+        canvas.translate(0.4, 0);
+        drawCowrieShell(canvas, Offset.zero, 0.52, false);
         canvas.restore();
     }
     canvas.restore();
@@ -1066,28 +1099,38 @@ class BoardPainter extends CustomPainter {
 // ---------------------------------------------------------------------------
 
 Widget statCounter(String label, String value) {
-  return Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text(
-          label,
-          style: const TextStyle(
-              color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    margin: const EdgeInsets.symmetric(horizontal: 4),
+    decoration: BoxDecoration(
+      color: const Color(0xFF261910),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0x33D4AF37)),
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            style: const TextStyle(
+                color: Color(0xFFC7B7A6), fontSize: 10.5, fontWeight: FontWeight.bold, letterSpacing: 0.8),
+          ),
         ),
-      ),
-      FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text(
-          value,
-          style: const TextStyle(
-              color: Color(0xFFFFD54F),
-              fontSize: 24,
-              fontWeight: FontWeight.bold),
+        const SizedBox(height: 2),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            value,
+            style: const TextStyle(
+                color: Color(0xFFFFD54F),
+                fontSize: 20,
+                fontWeight: FontWeight.bold),
+          ),
         ),
-      ),
-    ],
+      ],
+    ),
   );
 }
 
@@ -1136,37 +1179,42 @@ class GameFrame extends StatelessWidget {
 
   // Slim bar at the top: back, title, sound, restart.
   Widget topBar(BuildContext context) {
-    return SizedBox(
-      height: 48,
+    return Container(
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: const BoxDecoration(
+        color: Color(0xFF191009),
+      ),
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
-            tooltip: 'Back',
+            icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFFFFD54F), size: 20),
+            tooltip: 'Back to Hub',
             onPressed: () => Navigator.of(context).maybePop(),
           ),
-          const SizedBox(width: 48),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               title,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold),
+                  color: Color(0xFFFFD54F),
+                  fontSize: 19,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2),
             ),
           ),
           ValueListenableBuilder<bool>(
             valueListenable: AppSettings.soundOn,
             builder: (context, on, _) => IconButton(
               icon: Icon(on ? Icons.volume_up : Icons.volume_off,
-                  color: Colors.white),
+                  color: on ? const Color(0xFFFFD54F) : Colors.white54, size: 22),
               tooltip: on ? 'Sound on' : 'Sound off',
               onPressed: () => AppSettings.setSound(!on),
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
+            icon: const Icon(Icons.refresh, color: Colors.white70, size: 22),
             tooltip: 'Restart',
             onPressed: onRestart,
           ),
@@ -1178,21 +1226,29 @@ class GameFrame extends StatelessWidget {
   // Fixed height and one line: the board must never change size while you
   // play, otherwise it looks like the screen is shaking.
   Widget statusBanner() {
-    return SizedBox(
+    return Container(
       height: 44,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2B1D14),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0x55D4AF37), width: 1.2),
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2)),
+        ],
+      ),
       child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              status,
-              maxLines: 1,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold),
-            ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            status,
+            maxLines: 1,
+            style: const TextStyle(
+                color: Color(0xFFFDFBF7),
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5),
           ),
         ),
       ),
@@ -1202,7 +1258,7 @@ class GameFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF3B2A1A),
+      backgroundColor: const Color(0xFF191009),
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -1343,6 +1399,7 @@ class MenuScreen extends StatefulWidget {
 class _MenuScreenState extends State<MenuScreen> {
   GameKind kind = GameKind.puli;
   bool vsComputer = true;
+  int ashtaPlayers = 2; // Ashta Chamma: 2 or 4 players
   Difficulty difficulty = Difficulty.medium;
   Side humanSide = Side.goat; // Puli Meka: which side you play
   bool humanFirst = true; // Three Pawns: do you move first?
@@ -1379,22 +1436,30 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   void startGame() {
-    final Widget screen = kind == GameKind.puli
-        ? GameScreen(
-            config: GameConfig(
-              vsComputer: vsComputer,
-              humanSide: humanSide,
-              board: puliMekaBoard,
-              difficulty: difficulty,
-            ),
-          )
-        : ThreePawnsScreen(
-            config: ThreeConfig(
-              vsComputer: vsComputer,
-              humanPlayer: humanFirst ? 1 : 2,
-              difficulty: difficulty,
-            ),
-          );
+    final Widget screen = switch (kind) {
+      GameKind.puli => GameScreen(
+          config: GameConfig(
+            vsComputer: vsComputer,
+            humanSide: humanSide,
+            board: puliMekaBoard,
+            difficulty: difficulty,
+          ),
+        ),
+      GameKind.threePawns => ThreePawnsScreen(
+          config: ThreeConfig(
+            vsComputer: vsComputer,
+            humanPlayer: humanFirst ? 1 : 2,
+            difficulty: difficulty,
+          ),
+        ),
+      GameKind.ashtaChamma => AshtaChammaScreen(
+          config: AshtaConfig(
+            vsComputer: vsComputer,
+            playerCount: ashtaPlayers,
+            difficulty: difficulty,
+          ),
+        ),
+    };
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
   }
 
@@ -1434,14 +1499,18 @@ class _MenuScreenState extends State<MenuScreen> {
                     width: logoSize,
                     height: logoSize,
                     child: CustomPaint(
-                      painter: ArtPainter(puli ? Art.logo : Art.pawns),
+                      painter: ArtPainter(kind == GameKind.puli
+                          ? Art.logo
+                          : (kind == GameKind.threePawns ? Art.pawns : Art.shells)),
                     ),
                   ),
                   const SizedBox(height: 8),
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      puli ? 'PULI MEKA' : 'THREE PAWNS',
+                      kind == GameKind.puli
+                          ? 'PULI MEKA'
+                          : (kind == GameKind.threePawns ? 'THREE PAWNS' : 'ASHTA CHAMMA'),
                       style: const TextStyle(
                           color: Color(0xFFFFD54F),
                           fontSize: 38,
@@ -1450,7 +1519,11 @@ class _MenuScreenState extends State<MenuScreen> {
                     ),
                   ),
                   Text(
-                    puli ? 'Tigers and Goats' : 'Get three in a row',
+                    kind == GameKind.puli
+                        ? 'Tigers and Goats'
+                        : (kind == GameKind.threePawns
+                            ? 'Get three in a row'
+                            : 'Traditional 7x7 board with cowrie shells'),
                     style: const TextStyle(color: Colors.white70, fontSize: 16),
                   ),
 
@@ -1458,7 +1531,7 @@ class _MenuScreenState extends State<MenuScreen> {
                   options([
                     OptionCard(
                       label: 'Puli Meka',
-                      selected: puli,
+                      selected: kind == GameKind.puli,
                       onTap: () => setState(() => kind = GameKind.puli),
                       child: const SizedBox(
                         width: 56,
@@ -1468,12 +1541,22 @@ class _MenuScreenState extends State<MenuScreen> {
                     ),
                     OptionCard(
                       label: 'Three Pawns',
-                      selected: !puli,
+                      selected: kind == GameKind.threePawns,
                       onTap: () => setState(() => kind = GameKind.threePawns),
                       child: const SizedBox(
                         width: 56,
                         height: 56,
                         child: CustomPaint(painter: ArtPainter(Art.pawns)),
+                      ),
+                    ),
+                    OptionCard(
+                      label: 'Ashta Chamma',
+                      selected: kind == GameKind.ashtaChamma,
+                      onTap: () => setState(() => kind = GameKind.ashtaChamma),
+                      child: const SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: CustomPaint(painter: ArtPainter(Art.shells)),
                       ),
                     ),
                   ]),
@@ -1488,13 +1571,32 @@ class _MenuScreenState extends State<MenuScreen> {
                           size: 44, color: Colors.white),
                     ),
                     OptionCard(
-                      label: '2 Players',
+                      label: kind == GameKind.ashtaChamma ? 'Pass & Play' : '2 Players',
                       selected: !vsComputer,
                       onTap: () => setState(() => vsComputer = false),
                       child: const Icon(Icons.people,
                           size: 44, color: Colors.white),
                     ),
                   ]),
+                  if (kind == GameKind.ashtaChamma) ...[
+                    heading('NUMBER OF PLAYERS'),
+                    options([
+                      OptionCard(
+                        width: 110,
+                        label: '2 Players',
+                        selected: ashtaPlayers == 2,
+                        onTap: () => setState(() => ashtaPlayers = 2),
+                        child: const Icon(Icons.person_outline, size: 40, color: Colors.white),
+                      ),
+                      OptionCard(
+                        width: 110,
+                        label: '4 Players',
+                        selected: ashtaPlayers == 4,
+                        onTap: () => setState(() => ashtaPlayers = 4),
+                        child: const Icon(Icons.groups, size: 40, color: Colors.white),
+                      ),
+                    ]),
+                  ],
 
                   if (vsComputer) ...[
                     heading('DIFFICULTY'),
@@ -1509,8 +1611,8 @@ class _MenuScreenState extends State<MenuScreen> {
                               size: 40, color: Colors.white),
                         ),
                     ]),
-                    heading('PICK YOUR SIDE'),
-                    if (puli)
+                    if (kind != GameKind.ashtaChamma) heading('PICK YOUR SIDE'),
+                    if (kind == GameKind.puli)
                       options([
                         OptionCard(
                           label: 'Tigers',
@@ -1750,6 +1852,61 @@ class HowToPlayScreen extends StatelessWidget {
         ],
         leading: const Icon(Icons.lightbulb_outline,
             color: Color(0xFFFFD54F), size: 40),
+      ),
+    ];
+  }
+
+
+  List<Widget> ashtaSections() {
+    return [
+      section(
+        'The Game',
+        [
+          'Ashta Chamma (also called Chowka Bhara) is an ancient Indian board game played on a 7x7 cloth grid.',
+          'Each player commands 4 pawns, starting in their marked home house on the outer edge.',
+          'Pawns race anti-clockwise around the perimeter and spiral inward toward the central goal.',
+        ],
+        leading: art(Art.shells),
+      ),
+      section(
+        'The Cowrie Shells (Dice)',
+        [
+          'The game uses 4 cowrie shells to determine movement:',
+          '1 mouth up: move 1 space',
+          '2 mouths up: move 2 spaces',
+          '3 mouths up: move 3 spaces',
+          '4 mouths up (Chamma): move 4 spaces + extra roll!',
+          'All mouths down (Ashta): move 8 spaces + extra roll!',
+        ],
+        leading: const Icon(Icons.casino, color: Colors.white70, size: 40),
+      ),
+      section(
+        'Safe Zones (The 9 Crosses)',
+        [
+          'Squares marked with an "X" are safe zones (the 4 outer edge homes, 4 middle corners, and center goal).',
+          'Pawns resting on a safe zone cannot be captured.',
+          'Multiple pawns from any player can safely share a cross square.',
+        ],
+        leading: const Icon(Icons.security, color: Colors.white70, size: 40),
+      ),
+      section(
+        'Capturing & Unlocking Inner Ring',
+        [
+          'Landing on an opponent pawn on any uncrossed square captures it and sends it back to its starting home.',
+          'Capturing also awards an immediate extra roll!',
+          'Key Rule: You must capture at least one opponent pawn before your pawns can enter the inner spiral.',
+          'If you have not made a kill, your pawns must loop around the outer perimeter again.',
+        ],
+        leading: const Icon(Icons.gavel, color: Colors.white70, size: 40),
+      ),
+      section(
+        'Winning the Game',
+        [
+          'Once inside the inner ring, navigate pawns toward the central goal box (3, 3).',
+          'Exact roll is required to enter the center goal.',
+          'The first player to guide all 4 pawns into the center goal wins the game!',
+        ],
+        leading: const Icon(Icons.emoji_events, color: Color(0xFFFFD54F), size: 40),
       ),
     ];
   }
